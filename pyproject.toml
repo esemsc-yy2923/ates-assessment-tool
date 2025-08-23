@@ -32,6 +32,10 @@ ates-validate = "tool.validation.validation_framework:main"
 [tool.setuptools]
 package-dir = {"" = "src"}   
 
+[tool.poetry]
+package-mode = false
+
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["tool*"] 
