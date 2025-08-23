@@ -42,10 +42,8 @@ It is strongly recommended to use a virtual environment to avoid dependency conf
 Create and activate a virtual environment:
 ```bash
 python -m venv .venv
-
 # On Mac/Linux
 source .venv/bin/activate
-
 # On Windows
 .venv\Scripts\activate
 ```
@@ -74,6 +72,7 @@ After completing installation, you can run the tool from your terminal:
 ```bash
 ates-tool
 ```
+
 By default, the Streamlit app will open in your browser at http://localhost:8501/.
 
 **Run the validation framework:**
@@ -110,17 +109,36 @@ The tool supports three case formats:
 
 ## Development
 
-To contribute:
+Contributions are welcome. Please note that the `main` branch is protected and all changes require review and approval before merging.
 
-```bash
-git checkout -b feature/new-function
-# make changes
-git add .
-git commit -m "Add new feature"
-git push origin feature/new-function
-```
+### Workflow
 
-Recommendation: use a development branch and merge into main only after testing.
+1. Make sure you are working from the latest `dev` branch:
+   ```bash
+   git checkout dev
+   git pull origin dev
+   ```
+
+2. Create a new feature branch:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+3. Implement your changes and commit:
+   ```bash
+   git add .
+   git commit -m "Describe your changes"
+   git push origin feature/your-feature-name
+   ```
+
+4. Open a Pull Request (PR) from your feature branch into main.
+
+### Guidelines
+
+- Do not commit directly to main.
+- Use dev for ongoing development.
+- Ensure that new code is tested and documented.
+- Pull Requests will only be merged into main after review and approval by the repository owner.
 
 ---
 
