@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ates-assessment-tool"
+version = "0.3.0"
+authors = [
+    { name="Yixuan Yan", email="yy2923@ic.ac.uk" },
+]
+description = "Imperial College London Open-source probabilistic ATES assessment tool with Monte Carlo analysis, validation, and Streamlit interface."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "License :: OSI Approved :: MIT License"
+]
+dependencies = [
+    "pandas",
+    "numpy",
+    "streamlit",
+    "scipy",
+    "plotly"
+]
+
+[project.scripts]
+ates-tool = "tool.launch:main"
+ates-validate = "tool.validation.validation_framework:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.urls]
+Homepage = "https://github.com/esemsc-yy2923/ates-assessment-tool"
+Repository = "https://github.com/esemsc-yy2923/ates-assessment-tool"
+Issues = "https://github.com/esemsc-yy2923/ates-assessment-tool/issues"
+Documentation = "https://github.com/esemsc-yy2923/ates-assessment-tool#readme"
