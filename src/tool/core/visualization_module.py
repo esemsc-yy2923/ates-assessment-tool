@@ -1665,26 +1665,13 @@ class ATESResultsExporter:
             return {"error": "No successful results to analyze"}
         
         report = {
-            "metadata": self._generate_metadata(),
             "simulation_summary": self._generate_simulation_summary(),
             "statistical_summary": self._generate_statistical_summary(),
-            "risk_analysis": self._generate_risk_analysis(),
             "sensitivity_summary": self._generate_sensitivity_summary() if self.sensitivity_results else None,
-            "recommendations": self._generate_recommendations()
         }
         
         return report
     
-    def _generate_metadata(self) -> Dict:
-        """
-        Generate report metadata
-        """
-        return {
-            "report_generated": datetime.now().isoformat(),
-            "analysis_type": "Monte Carlo Simulation",
-            "tool": "ATES Assessment Tool",
-            "version": "1.0.0"
-        }
     
     def _generate_simulation_summary(self) -> Dict:
         """
@@ -1704,90 +1691,163 @@ class ATESResultsExporter:
     
     def _generate_statistical_summary(self) -> Dict:
         """
-        Generate statistical summary for key parameters
+        Generate statistical summary for ALL 62 output parameters with proper infinity handling
         """
-        key_params = [
-            'heating_system_cop', 'cooling_system_cop', 
-             'energy_balance_ratio', 'volume_balance_ratio'
-        ]
+        # Get all numeric output parameters 
+        numeric_cols = self.successful_results.select_dtypes(include=[np.number]).columns
+        all_output_params = [col for col in numeric_cols if col not in ['iteration', 'success']]
         
         summary = {}
-        for param in key_params:
+        
+        for param in all_output_params:
             if param in self.successful_results.columns:
                 data = self.successful_results[param].dropna()
-                data = data[np.isfinite(data)]
-                if len(data) > 0:
-                    summary[param] = {
-                        "count": int(len(data)),
-                        "mean": safe_float(data.mean()),
-                        "std": safe_float(data.std()),
-                        "min": safe_float(data.min()),
-                        "max": safe_float(data.max()),
-                        "percentiles": {
-                            "p5": safe_float(data.quantile(0.05)),
-                            "p10": safe_float(data.quantile(0.10)),
-                            "p25": safe_float(data.quantile(0.25)),
-                            "p50": safe_float(data.quantile(0.50)),
-                            "p75": safe_float(data.quantile(0.75)),
-                            "p90": safe_float(data.quantile(0.90)),
-                            "p95": safe_float(data.quantile(0.95))
-                        },
-                        "distribution_stats": {
-                            "skewness": safe_float(data.skew()),
-                            "kurtosis": safe_float(data.kurtosis()),
-                            "coefficient_of_variation": safe_float(data.std() / data.mean()) if data.mean() != 0 else 0
+                
+                if len(data) == 0:
+                    continue
+                    
+                try:
+                    # check whether cop related params
+                    is_cop_param = ('cop' in param.lower() or 
+                                param.endswith('_ehp') or 
+                                'heat_pump' in param.lower())
+                    
+                    if is_cop_param:
+                        # seperate give param summary for direct mode or heat pump mode
+                        finite_data = data[np.isfinite(data)]
+                        infinite_count = len(data) - len(finite_data)
+                        
+                        param_summary = {
+                            "parameter_type": "performance_coefficient",
+                            "total_cases": int(len(data))
                         }
+                        
+                        if infinite_count > 0:
+                            param_summary.update({
+                                "direct_mode_cases": int(infinite_count),
+                                "direct_mode_percentage": round(infinite_count / len(data) * 100, 1),
+                                "heat_pump_mode_cases": int(len(finite_data))
+                            })
+                            
+                            if len(finite_data) > 0:
+                                param_summary["heat_pump_mode_statistics"] = {
+                                    "mean": safe_float(finite_data.mean()),
+                                    "std": safe_float(finite_data.std()),
+                                    "min": safe_float(finite_data.min()),
+                                    "max": safe_float(finite_data.max()),
+                                    "percentiles": {
+                                        "p0": safe_float(finite_data.quantile(0.00)),
+                                        "p10": safe_float(finite_data.quantile(0.10)),
+                                        "p20": safe_float(finite_data.quantile(0.20)),
+                                        "p30": safe_float(finite_data.quantile(0.30)),
+                                        "p40": safe_float(finite_data.quantile(0.40)),
+                                        "p50": safe_float(finite_data.quantile(0.50)),
+                                        "p60": safe_float(finite_data.quantile(0.60)),
+                                        "p70": safe_float(finite_data.quantile(0.70)),
+                                        "p80": safe_float(finite_data.quantile(0.80)),
+                                        "p90": safe_float(finite_data.quantile(0.90)),
+                                        "p100": safe_float(finite_data.quantile(1.00))
+                                    },
+                                    "distribution_stats": {
+                                        "coefficient_of_variation": safe_float(finite_data.std() / finite_data.mean()) if finite_data.mean() != 0 else 0,
+                                        "skewness": safe_float(finite_data.skew()) if len(finite_data) > 2 else None
+                                    }
+                                }
+                        else:
+                            # no direct mode
+                            param_summary.update({
+                                "direct_mode_cases": 0,
+                                "direct_mode_percentage": 0.0,
+                                "heat_pump_mode_cases": int(len(finite_data)),
+                                "statistics": {
+                                    "mean": safe_float(finite_data.mean()),
+                                    "std": safe_float(finite_data.std()),
+                                    "min": safe_float(finite_data.min()),
+                                    "max": safe_float(finite_data.max()),
+                                    "percentiles": {
+                                        "p0": safe_float(finite_data.quantile(0.00)),
+                                        "p10": safe_float(finite_data.quantile(0.10)),
+                                        "p20": safe_float(finite_data.quantile(0.20)),
+                                        "p30": safe_float(finite_data.quantile(0.30)),
+                                        "p40": safe_float(finite_data.quantile(0.40)),
+                                        "p50": safe_float(finite_data.quantile(0.50)),
+                                        "p60": safe_float(finite_data.quantile(0.60)),
+                                        "p70": safe_float(finite_data.quantile(0.70)),
+                                        "p80": safe_float(finite_data.quantile(0.80)),
+                                        "p90": safe_float(finite_data.quantile(0.90)),
+                                        "p100": safe_float(finite_data.quantile(1.00))
+                                    },
+                                    "distribution_stats": {
+                                        "skewness": safe_float(finite_data.skew()) if len(finite_data) > 2 else None,
+                                        "kurtosis": safe_float(finite_data.kurtosis()) if len(finite_data) > 2 else None,
+                                        "coefficient_of_variation": safe_float(finite_data.std() / finite_data.mean()) if finite_data.mean() != 0 else 0
+                                    }
+                                }
+                            })
+                    else:
+                        # non-cop params
+                        finite_data = data[np.isfinite(data)]
+                        infinite_count = len(data) - len(finite_data)
+                        
+                        if len(finite_data) > 0:
+                            param_summary = {
+                                "parameter_type": "standard_output",
+                                "count": int(len(finite_data)),
+                                "mean": safe_float(finite_data.mean()),
+                                "std": safe_float(finite_data.std()),
+                                "min": safe_float(finite_data.min()),
+                                "max": safe_float(finite_data.max()),
+                                "percentiles": {
+                                    "p0": safe_float(finite_data.quantile(0.00)),
+                                    "p10": safe_float(finite_data.quantile(0.10)),
+                                    "p20": safe_float(finite_data.quantile(0.20)),
+                                    "p30": safe_float(finite_data.quantile(0.30)),
+                                    "p40": safe_float(finite_data.quantile(0.40)),
+                                    "p50": safe_float(finite_data.quantile(0.50)),
+                                    "p60": safe_float(finite_data.quantile(0.60)),
+                                    "p70": safe_float(finite_data.quantile(0.70)),
+                                    "p80": safe_float(finite_data.quantile(0.80)),
+                                    "p90": safe_float(finite_data.quantile(0.90)),
+                                    "p100": safe_float(finite_data.quantile(1.00))
+                                },
+                                "distribution_stats": {
+                                    "skewness": safe_float(finite_data.skew()) if len(finite_data) > 2 else None,
+                                    "kurtosis": safe_float(finite_data.kurtosis()) if len(finite_data) > 2 else None,
+                                    "coefficient_of_variation": safe_float(finite_data.std() / finite_data.mean()) if finite_data.mean() != 0 else 0
+                                }
+                            }
+                            
+                            # record inf without influence stats
+                            if infinite_count > 0:
+                                param_summary["infinite_values_excluded"] = int(infinite_count)
+                                param_summary["note"] = f"{infinite_count} infinite values excluded from statistics"
+                    
+                    summary[param] = param_summary
+                    
+                except Exception as e:
+                    # if some params return to error, record the others
+                    summary[param] = {
+                        "parameter_type": "error",
+                        "error": f"Failed to calculate statistics: {str(e)}",
+                        "raw_count": int(len(data)) if len(data) > 0 else 0
                     }
+        
+        # stats summary
+        total_params = len(summary)
+        cop_params = len([p for p, s in summary.items() if s.get("parameter_type") == "performance_coefficient"])
+        standard_params = len([p for p, s in summary.items() if s.get("parameter_type") == "standard_output"])
+        error_params = len([p for p, s in summary.items() if s.get("parameter_type") == "error"])
+        
+        summary["_summary_metadata"] = {
+            "total_parameters_analyzed": total_params,
+            "performance_coefficient_parameters": cop_params,
+            "standard_output_parameters": standard_params,
+            "parameters_with_errors": error_params
+        }
         
         return summary
     
-    def _generate_risk_analysis(self) -> Dict:
-        """Generate comprehensive risk analysis"""
-        risk_analysis = {}
-        
-        # performance thresholds
-        thresholds = {
-            'heating_system_cop': {'excellent': 4.0, 'good': 3.0, 'acceptable': 2.0},
-            'cooling_system_cop': {'excellent': 5.0, 'good': 3.5, 'acceptable': 2.5},
-            'energy_balance_ratio': {'excellent': 0.05, 'good': 0.1, 'acceptable': 0.2}
-        }
-        
-        for param, threshold in thresholds.items():
-            if param in self.successful_results.columns:
-                data = self.successful_results[param].dropna()
-                if len(data) > 0:
-                    if param == 'energy_balance_ratio':
-                        abs_data = data.abs()
-                        excellent_prob = safe_float((abs_data <= threshold['excellent']).mean()) * 100
-                        good_prob = safe_float((abs_data <= threshold['good']).mean()) * 100
-                        acceptable_prob = safe_float((abs_data <= threshold['acceptable']).mean()) * 100
-                    else:
-                        excellent_prob = safe_float((data >= threshold['excellent']).mean()) * 100
-                        good_prob = safe_float((data >= threshold['good']).mean()) * 100
-                        acceptable_prob = safe_float((data >= threshold['acceptable']).mean()) * 100
-                    
-                    risk_analysis[param] = {
-                        "excellent_performance_probability": round(excellent_prob, 2),
-                        "good_performance_probability": round(good_prob, 2),
-                        "acceptable_performance_probability": round(acceptable_prob, 2),
-                        "poor_performance_probability": round(100 - acceptable_prob, 2),
-                        "risk_level": self._assess_risk_level(100 - acceptable_prob)
-                    }
-        
-        return risk_analysis
-    
-    def _assess_risk_level(self, poor_performance_prob: float) -> str:
-        """
-        Assess risk level based on poor performance probability
-        """
-        if poor_performance_prob <= 5:
-            return "Low Risk"
-        elif poor_performance_prob <= 15:
-            return "Moderate Risk"
-        elif poor_performance_prob <= 30:
-            return "High Risk"
-        else:
-            return "Very High Risk"
+
     
     def _generate_sensitivity_summary(self) -> Dict:
         """Generate comprehensive sensitivity analysis summary"""
@@ -1846,90 +1906,7 @@ class ATESResultsExporter:
             }
         }
     
-    def _generate_recommendations(self) -> Dict:
-        """
-        Generate actionable recommendations based on analysis
-        """
-        recommendations = {
-            "system_design": [],
-            "risk_mitigation": [],
-            "parameter_focus": [],
-            "operational": []
-        }
-        
-        # Analyze results and generate recommendations
-        if len(self.successful_results) > 0:
-            # System performance recommendations
-            heating_cop = self.successful_results.get('heating_system_cop', pd.Series(dtype=float)).dropna()
-            cooling_cop = self.successful_results.get('cooling_system_cop', pd.Series(dtype=float)).dropna()
-            energy_balance = self.successful_results.get('energy_balance_ratio', pd.Series(dtype=float)).dropna()
-            
-            if len(heating_cop) > 0:
-                heating_mean = safe_float(heating_cop.mean())
-                if heating_mean < 2.5:
-                    recommendations["system_design"].append(
-                        "Consider optimizing heating system design to improve COP performance"
-                    )
-                elif heating_mean > 4.0:
-                    recommendations["system_design"].append(
-                        "Heating system shows excellent performance - consider this design as baseline"
-                    )
-            
-            if len(cooling_cop) > 0:
-                # Handle infinite COP (direct cooling mode)
-                finite_cooling_cop = cooling_cop[cooling_cop != float('inf')]
-                if len(finite_cooling_cop) > 0:
-                    cooling_mean = safe_float(finite_cooling_cop.mean())
-                    if cooling_mean < 3.0:
-                        recommendations["system_design"].append(
-                            "Cooling system performance could be improved - consider design optimization"
-                        )
-                
-                direct_cooling_rate = safe_float((cooling_cop == float('inf')).mean()) * 100
-                if direct_cooling_rate > 50:
-                    recommendations["operational"].append(
-                        f"Direct cooling mode achievable in {direct_cooling_rate:.1f}% of scenarios - "
-                        "optimize operational strategy to maximize direct cooling periods"
-                    )
-            
-            if len(energy_balance) > 0:
-                abs_energy_balance = energy_balance.abs()
-                poor_balance_rate = safe_float((abs_energy_balance > 0.2).mean()) * 100
-                if poor_balance_rate > 20:
-                    recommendations["risk_mitigation"].append(
-                        f"Energy imbalance risk detected in {poor_balance_rate:.1f}% of scenarios - "
-                        "consider adjusting heating/cooling operational periods"
-                    )
-        
-        # Sensitivity-based info
-        if self.sensitivity_results:
-            # find most influential parameters
-            all_influences = []
-            for output_param, sensitivity_df in self.sensitivity_results.items():
-                top_param = sensitivity_df.iloc[0]
-                all_influences.append({
-                    'param': top_param['Input_Parameter'],
-                    'influence': safe_float(top_param['Abs_Pearson'])
-                })
-            
-            # sort by influence decs
-            all_influences.sort(key=lambda x: x['influence'], reverse=True)
-            
-            if all_influences:
-                top_influential = all_influences[0]
-                recommendations["parameter_focus"].append(
-                    f"Focus on {top_influential['param']} - highest overall influence on system performance"
-                )
-                
-                if len(all_influences) >= 3:
-                    top_three = [inf['param'] for inf in all_influences[:3]]
-                    recommendations["parameter_focus"].append(
-                        f"Priority parameters for design optimization: {', '.join(top_three)}"
-                    )
-        
-        return recommendations
-
-
+ 
 # Utility functions for Streamlit integration
 def create_results_dashboard():
     """Create a comprehensive results dashboard"""
@@ -2034,56 +2011,53 @@ def render_summary_report_tab():
         
         stats_summary = report["statistical_summary"]
         
-        # create performance dashboard
+        
         performance_data = []
         for param, stats in stats_summary.items():
+            if param.startswith('_'):  
+                continue
+                
             param_display = param.replace('_', ' ').title()
-            performance_data.append({
-                'Parameter': param_display,
-                'Mean': f"{stats['mean']:.3f}",
-                'P5-P95 Range': f"{stats['percentiles']['p5']:.3f} - {stats['percentiles']['p95']:.3f}",
-                'Coefficient of Variation': f"{stats['distribution_stats']['coefficient_of_variation']:.3f}",
-                'Risk Level': _assess_parameter_risk(param, stats)
-            })
+            
+            try:
+               
+                if stats.get("parameter_type") == "performance_coefficient":
+                
+                    if stats.get("heat_pump_mode_statistics"):
+                        mean_val = stats["heat_pump_mode_statistics"]["mean"]
+                        p10_val = stats["heat_pump_mode_statistics"]["percentiles"]["p10"]
+                        p90_val = stats["heat_pump_mode_statistics"]["percentiles"]["p90"]
+                    elif stats.get("statistics"):
+                        mean_val = stats["statistics"]["mean"]
+                        p10_val = stats["statistics"]["percentiles"]["p10"]
+                        p90_val = stats["statistics"]["percentiles"]["p90"]
+                    else:
+                        continue  
+                        
+                elif stats.get("parameter_type") == "standard_output":
+               
+                    mean_val = stats["mean"]
+                    p10_val = stats["percentiles"]["p10"]
+                    p90_val = stats["percentiles"]["p90"]
+                else:
+                    continue 
+                
+                performance_data.append({
+                    'Parameter': param_display,
+                    'Mean': f"{mean_val:.3f}",
+                    'P10-P90 Range': f"{p10_val:.3f} - {p90_val:.3f}",
+                    'Parameter Type': stats.get("parameter_type", "unknown")
+                })
+                
+            except (KeyError, TypeError):
+                continue
         
         if performance_data:
             perf_df = pd.DataFrame(performance_data)
             st.dataframe(perf_df, use_container_width=True, hide_index=True)
-    
-    # risk Analysis
-    if "risk_analysis" in report:
-        st.markdown("### Risk Assessment")
-        
-        risk_analysis = report["risk_analysis"]
-        
-        # risk summary metrics
-        risk_metrics = []
-        for param, risk_data in risk_analysis.items():
-            risk_metrics.append({
-                'Parameter': param.replace('_', ' ').title(),
-                'Risk Level': risk_data['risk_level'],
-                'Poor Performance Probability': f"{risk_data['poor_performance_probability']:.1f}%",
-                'Acceptable Performance': f"{risk_data['acceptable_performance_probability']:.1f}%"
-            })
-        
-        if risk_metrics:
-            risk_df = pd.DataFrame(risk_metrics)
-            
-            # color code risk levels
-            def color_risk_level(val):
-                if val == "Low Risk":
-                    return 'background-color: #d4edda'
-                elif val == "Moderate Risk":
-                    return 'background-color: #fff3cd'
-                elif val == "High Risk":
-                    return 'background-color: #f8d7da'
-                else:  # Very High Risk
-                    return 'background-color: #f5c6cb'
-            
-            # for element-wise styling
-            styled_risk_df = risk_df.style.map(color_risk_level, subset=['Risk Level'])
-            
-            st.dataframe(styled_risk_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No valid performance indicators to display")
+
     
     # Sensitivity Analysis Summary
     if "sensitivity_summary" in report and report["sensitivity_summary"]:
@@ -2120,47 +2094,7 @@ def render_summary_report_tab():
             with col3:
                 st.metric("Max Influence", f"{influence_summary['max_influence_strength']:.4f}")
     
-    # Recommendations
-    if "recommendations" in report:
-        st.markdown("### Recommendations")
-        
-        recommendations = report["recommendations"]
-        
-        # Create tabs for different recommendation categories
-        rec_tab1, rec_tab2, rec_tab3, rec_tab4 = st.tabs([
-            "System Design", 
-            "Risk Mitigation", 
-            "Parameter Focus", 
-            "Operational"
-        ])
-        
-        with rec_tab1:
-            if recommendations["system_design"]:
-                for i, rec in enumerate(recommendations["system_design"], 1):
-                    st.markdown(f"{i}. {rec}")
-            else:
-                st.info("No specific system design recommendations at this time")
-        
-        with rec_tab2:
-            if recommendations["risk_mitigation"]:
-                for i, rec in enumerate(recommendations["risk_mitigation"], 1):
-                    st.markdown(f"{i}. {rec}")
-            else:
-                st.info("No critical risks identified requiring immediate mitigation")
-        
-        with rec_tab3:
-            if recommendations["parameter_focus"]:
-                for i, rec in enumerate(recommendations["parameter_focus"], 1):
-                    st.markdown(f"{i}. {rec}")
-            else:
-                st.info("No specific parameter focus recommendations")
-        
-        with rec_tab4:
-            if recommendations["operational"]:
-                for i, rec in enumerate(recommendations["operational"], 1):
-                    st.markdown(f"{i}. {rec}")
-            else:
-                st.info("No specific operational recommendations")
+
     
     # Export Options
     st.markdown("### Export Options")
@@ -2219,40 +2153,6 @@ def render_summary_report_tab():
                 help="No sensitivity data available",
                 use_container_width=True
             )
-
-
-def _assess_parameter_risk(param_name: str, stats: Dict) -> str:
-    """
-    Assess risk level for a parameter based on its statistics
-    """
-    cv = stats['distribution_stats']['coefficient_of_variation']
-    mean = stats['mean']
-    
-    # parameter-specific risk assessment
-    if 'cop' in param_name.lower():
-        if mean < 2.0:
-            return "High Risk"
-        elif mean < 3.0:
-            return "Moderate Risk"
-        else:
-            return "Low Risk"
-    
-    elif 'energy_balance_ratio' in param_name:
-        if abs(mean) > 0.2:
-            return "High Risk"
-        elif abs(mean) > 0.1:
-            return "Moderate Risk"
-        else:
-            return "Low Risk"
-    
-    else:
-        # general assessment based on coefficient of variation
-        if cv > 0.5:
-            return "High Variability"
-        elif cv > 0.2:
-            return "Moderate Variability"
-        else:
-            return "Low Variability"
 
 
 # Additional utility functions

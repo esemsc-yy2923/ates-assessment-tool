@@ -550,10 +550,68 @@ class ATESAppState:
         return data
     
     def _get_full_state(self) -> Dict[str, Any]:
-        """Get complete state data"""
+        """Get complete state data with comprehensive summary"""
         data = self._get_parameters_and_results()
         data['save_type'] = 'full_state_report'
-        # Simplified version - only include basic statistical information
+        
+        # Add comprehensive summary if Monte Carlo results exist
+        if 'monte_carlo_results' in st.session_state and st.session_state.monte_carlo_results is not None:
+            try:
+                # Import the exporter class
+                from tool.core.visualization_module import ATESResultsExporter
+                
+                # Create exporter instance
+                exporter = ATESResultsExporter(
+                    st.session_state.monte_carlo_results,
+                    st.session_state.get('sensitivity_results')
+                )
+                
+                # Generate comprehensive report
+                comprehensive_report = exporter.generate_comprehensive_report()
+                
+                if "error" not in comprehensive_report:
+                    data['comprehensive_summary'] = comprehensive_report
+                    
+                    # Add Monte Carlo raw data summary
+                    mc_results = st.session_state.monte_carlo_results
+                    successful_runs = int(mc_results['success'].sum()) if 'success' in mc_results.columns else len(mc_results)
+                    
+                    data['monte_carlo_summary'] = {
+                        'total_iterations': len(mc_results),
+                        'successful_iterations': successful_runs,
+                        'success_rate_percent': (successful_runs / len(mc_results) * 100) if len(mc_results) > 0 else 0,
+                        'failed_iterations': len(mc_results) - successful_runs,
+                        'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    
+                    # Add sensitivity analysis summary if available
+                    if st.session_state.get('sensitivity_results'):
+                        sens_results = st.session_state.sensitivity_results
+                        data['sensitivity_analysis_summary'] = {
+                            'output_parameters_analyzed': len(sens_results),
+                            'total_correlations_calculated': sum(len(df) for df in sens_results.values()),
+                            'available_outputs': list(sens_results.keys())
+                        }
+                else:
+                    # If comprehensive report generation failed, add basic Monte Carlo info
+                    mc_results = st.session_state.monte_carlo_results
+                    successful_runs = int(mc_results['success'].sum()) if 'success' in mc_results.columns else len(mc_results)
+                    
+                    data['monte_carlo_summary'] = {
+                        'total_iterations': len(mc_results),
+                        'successful_iterations': successful_runs,
+                        'success_rate_percent': (successful_runs / len(mc_results) * 100) if len(mc_results) > 0 else 0,
+                        'error': 'Comprehensive summary generation failed',
+                        'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+            
+            except Exception as e:
+                # If any error occurs, add basic information
+                data['monte_carlo_summary'] = {
+                    'error': f'Summary generation failed: {str(e)}',
+                    'analysis_timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+                }
+        
         return data
     
     def _load_state_data(self, state_data: Dict[str, Any]):
@@ -570,12 +628,11 @@ class ATESAppState:
             
             st.session_state['ates_params'] = params
         
-        # Load probability distributions - use safer method
+        # Load probability distributions 
         if 'param_distributions' in state_data:
             try:
                 loaded_distributions = state_data['param_distributions']
                 if isinstance(loaded_distributions, dict):
-                    # Use safer assignment method
                     st.session_state.update({
                         'param_distributions': loaded_distributions,
                         'param_config_version': st.session_state.get('param_config_version', 0) + 1,
