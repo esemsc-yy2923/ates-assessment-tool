@@ -29,8 +29,12 @@ dependencies = [
 ates-tool = "tool.launch:main"
 ates-validate = "tool.validation.validation_framework:main"
 
+[tool.setuptools]
+package-dir = {"" = "src"}   
+
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["tool*"] 
 
 [project.urls]
 Homepage = "https://github.com/esemsc-yy2923/ates-assessment-tool"
