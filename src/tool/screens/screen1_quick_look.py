@@ -217,7 +217,7 @@ def render_parameter_section_a():
                 "Thermal Recovery Factor (-)",
                 value=float(st.session_state.ates_params.thermal_recovery_factor),
                 min_value=0.1,
-                max_value=0.8,
+                max_value=1.0,
                 step=0.01,
                 format="%.2f",
                 help="Thermal recovery efficiency"
@@ -270,7 +270,7 @@ def render_parameter_section_b():
                 "Heating Injection Temperature (°C)",
                 value=float(st.session_state.ates_params.heating_ave_injection_temp),
                 min_value=5.0,
-                max_value=15.0,
+                max_value=100.0,
                 step=0.1,
                 format="%.2f",
                 help="Heating injection temperature (< Aquifer Temperature)"
@@ -413,8 +413,8 @@ def render_parameter_section_d():
             cooling_temp_to_building = st.number_input(
                 "Building Cooling Temperature (°C)",
                 value=float(st.session_state.ates_params.cooling_temp_to_building),
-                min_value=5.0,
-                max_value=15.0,
+                min_value=0.0,
+                max_value=100.0,
                 step=0.1,
                 format="%.2f",
                 help="Building cooling temperature (< Aquifer Temperature)"
