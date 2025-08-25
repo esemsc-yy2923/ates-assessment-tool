@@ -1125,8 +1125,36 @@ class ATESVisualizer:
                 
                 infinite_count = len(data) - len(finite_data)
                 if infinite_count > 0:
-                    row['Parameter'] += f" ({infinite_count} direct mode)"
+                    # Get indices of rows with infinite values
+                    infinite_indices = data[~np.isfinite(data)].index
                     
+                    # Check direct mode status for these rows
+                    direct_mode_cases = 0
+                    
+                    if param.startswith('heating_'):
+                        # Check heating direct mode
+                        if 'heating_direct_mode' in self.successful_results.columns:
+                            direct_mode_cases = self.successful_results.loc[infinite_indices, 'heating_direct_mode'].sum()
+                    elif param.startswith('cooling_'):
+                        # Check cooling direct mode
+                        if 'cooling_direct_mode' in self.successful_results.columns:
+                            direct_mode_cases = self.successful_results.loc[infinite_indices, 'cooling_direct_mode'].sum()
+                    else:
+                        # check for any direct mode
+                        if 'heating_direct_mode' in self.successful_results.columns and 'cooling_direct_mode' in self.successful_results.columns:
+                            heating_direct = self.successful_results.loc[infinite_indices, 'heating_direct_mode']
+                            cooling_direct = self.successful_results.loc[infinite_indices, 'cooling_direct_mode']
+                            direct_mode_cases = (heating_direct | cooling_direct).sum()
+                    
+                    # Generate appropriate labels
+                    cop_cases = infinite_count - direct_mode_cases
+                    
+                    if direct_mode_cases > 0:
+                        row['Parameter'] += f" ({direct_mode_cases} direct mode)"
+                    
+                    if cop_cases > 0:
+                        row['Parameter'] += f" ({cop_cases} COP ≤ 1)"
+                        
                 percentile_data.append(row)
         
         if percentile_data:
