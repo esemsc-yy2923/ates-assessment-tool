@@ -597,7 +597,7 @@ class ATESCalculator:
 
         # Electrical energy calculations
         # N34 = D25*G21*1000
-        r.cooling_elec_energy_hydraulic_pumps = p.pump_energy_density * p.cooling_total_produced_volume * 1000
+        r.cooling_elec_energy_hydraulic_pumps = p.pump_energy_density * abs(p.cooling_total_produced_volume) * 1000
 
         if r.cooling_direct_mode:
             # Direct cooling: no heat pump electrical energy
