@@ -112,21 +112,76 @@ def initialize_distributions() -> Dict[str, Dict[str, Any]]:
     return distributions
 
 def sync_from_deterministic():
-    """Sync parameter values from deterministic calculation to probabilistic setup"""
+    """sync logic"""
+    updated_params = []
+    
     for param_name in st.session_state.param_distributions:
         if hasattr(st.session_state.ates_params, param_name):
             current_value = getattr(st.session_state.ates_params, param_name)
             dist = st.session_state.param_distributions[param_name]
             
-            dist['value'] = current_value
-            dist['mean'] = current_value
-            dist['most_likely'] = current_value
+          
+            if dist['type'] == 'single_value':
+                old_value = dist.get('value', 0)
+            elif dist['type'] == 'triangular':
+                old_value = dist.get('most_likely', 0)
+            elif dist['type'] in ['normal', 'lognormal']:
+                old_value = dist.get('mean', 0)
+            elif dist['type'] == 'range':
+                old_value = (dist.get('min', 0) + dist.get('max', 0)) / 2
+            else:
+                old_value = dist.get('value', 0)
             
-            if dist['min'] == dist['max'] or abs(dist['min'] - dist['max']) < 1e-6:
-                dist['min'] = current_value * 0.8
-                dist['max'] = current_value * 1.2
-            
-            dist['std'] = max(current_value * 0.1, 0.01)
+            if abs(old_value - current_value) > 1e-6:  
+                updated_params.append(param_name)
+                
+                
+                if dist['type'] == 'single_value':
+                    dist['value'] = current_value
+                elif dist['type'] == 'triangular':
+                   
+                    old_range = dist.get('max', 0) - dist.get('min', 0)
+                    if old_range > 0:
+                        ratio = old_range / old_value if old_value != 0 else 0.4
+                        new_range = current_value * ratio
+                        dist['min'] = current_value - new_range / 2
+                        dist['max'] = current_value + new_range / 2
+                    else:
+                        dist['min'] = current_value * 0.8
+                        dist['max'] = current_value * 1.2
+                    dist['most_likely'] = current_value
+                elif dist['type'] in ['normal', 'lognormal']:
+                   
+                    old_std = dist.get('std', 0)
+                    if old_value != 0:
+                        std_ratio = old_std / old_value
+                        dist['std'] = current_value * std_ratio
+                    else:
+                        dist['std'] = max(current_value * 0.1, 0.01)
+                    dist['mean'] = current_value
+                elif dist['type'] == 'range':
+                    
+                    old_min = dist.get('min', 0)
+                    old_max = dist.get('max', 0)
+                    if old_value != 0:
+                        min_ratio = old_min / old_value
+                        max_ratio = old_max / old_value
+                        dist['min'] = current_value * min_ratio
+                        dist['max'] = current_value * max_ratio
+                    else:
+                        dist['min'] = current_value * 0.9
+                        dist['max'] = current_value * 1.1
+                
+                
+                dist['value'] = current_value
+                dist['mean'] = current_value
+                dist['most_likely'] = current_value
+    
+    if updated_params:
+        
+        st.session_state.stable_param_values = {}
+        st.session_state.param_config_version += 1
+        st.success(f"Synchronized {len(updated_params)} parameters from Quick Look")
 
 def sync_to_deterministic():
     """
@@ -155,7 +210,7 @@ def sync_to_deterministic():
 
 def render_parameter_config(param_name: str, param_label: str):
     """
-    Render parameter configuration interface
+    Render parameter configuration interface 
     """
     dist_config = st.session_state.param_distributions[param_name]
     current_type = dist_config.get('type', 'single_value')
@@ -180,11 +235,50 @@ def render_parameter_config(param_name: str, param_label: str):
             }[x]
         )
         
+        
         if new_dist_type != current_type:
+            
+            if current_type == 'single_value':
+                center_value = dist_config.get('value', 14.0)
+            elif current_type == 'triangular':
+                center_value = dist_config.get('most_likely', 14.0)
+            elif current_type in ['normal', 'lognormal']:
+                center_value = dist_config.get('mean', 14.0)
+            elif current_type == 'range':
+                center_value = (dist_config.get('min', 14.0) + dist_config.get('max', 14.0)) / 2
+            else:
+                center_value = dist_config.get('value', 14.0)
+            
+           
             dist_config['type'] = new_dist_type
+            
+            if new_dist_type == 'single_value':
+                dist_config['value'] = center_value
+            elif new_dist_type == 'range':
+                
+                dist_config['min'] = center_value * 0.9
+                dist_config['max'] = center_value * 1.1
+            elif new_dist_type == 'triangular':
+                dist_config['min'] = center_value * 0.8
+                dist_config['most_likely'] = center_value
+                dist_config['max'] = center_value * 1.2
+            elif new_dist_type in ['normal', 'lognormal']:
+                dist_config['mean'] = center_value
+                dist_config['std'] = max(center_value * 0.1, 0.01)
+                if new_dist_type == 'lognormal':
+                    dist_config['location'] = 0.0
+                    dist_config['use_log_params'] = False
+            
             from tool.utils.state_management import mark_case_modified
             mark_case_modified()
             st.session_state.param_config_version = version + 1
+            
+            
+            keys_to_remove = [k for k in st.session_state.stable_param_values.keys() 
+                             if k.startswith(f"{param_name}_v")]
+            for k in keys_to_remove:
+                del st.session_state.stable_param_values[k]
+            
             st.rerun()
         
         render_distribution_params_stable(param_name, dist_config, new_dist_type, version)
@@ -195,13 +289,20 @@ def render_parameter_config(param_name: str, param_label: str):
 
 def render_distribution_params_stable(param_name: str, dist_config: Dict, dist_type: str, version: int):
     """
-    Render distribution specific parameters
+    Render distribution specific parameters 
     """
     stable_key = f"{param_name}_v{version}"
+    
+   
     if stable_key not in st.session_state.stable_param_values:
         st.session_state.stable_param_values[stable_key] = dist_config.copy()
     
     stable_config = st.session_state.stable_param_values[stable_key]
+    
+    
+    for key in dist_config:
+        if key not in stable_config or stable_config[key] != dist_config[key]:
+            stable_config[key] = dist_config[key]
     
     def update_stable_config(key: str, value: Any):
         """
@@ -844,7 +945,7 @@ def reset_all_distributions():
     
     st.session_state.param_distributions = initialize_distributions()
     
-    # Critical fix: Clear all analysis results
+    # Clear all analysis results
     analysis_keys = [
         'monte_carlo_results',
         'sensitivity_results', 
