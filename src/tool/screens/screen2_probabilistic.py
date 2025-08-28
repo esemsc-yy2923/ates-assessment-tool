@@ -722,16 +722,7 @@ def render_monte_carlo_execution():
     for name, dist in st.session_state.param_distributions.items():
         if dist['type'] != 'single_value':
             uncertain_params.append(name)
-    
-    # if uncertain_params:
-    #     st.info(f"Analysis will vary {len(uncertain_params)} uncertain parameters")
-        
-    #     st.write("**Parameters with uncertainty:**")
-    #     param_list = ", ".join([p.replace('_', ' ').title() for p in uncertain_params])
-    #     st.write(param_list)
-    # else:
-    #     st.info("Deterministic analysis - all parameters use fixed values")
-    
+
     validation_errors = validate_distribution_config()
     if validation_errors:
         st.error("Configuration errors:")
@@ -769,63 +760,80 @@ def validate_distribution_config() -> List[str]:
     return errors
 
 def run_monte_carlo_analysis():
-   """
-   Execute Monte Carlo analysis 
-   """
-   try:
-       progress_bar = st.progress(0)
-       status_text = st.empty()
-       
-       mc_engine = ATESMonteCarloEngine(
-           st.session_state.ates_params,
-           st.session_state.mc_config
-       )
-       
-       progress_callback = create_progress_callback(progress_bar, status_text)
-       
-       start_time = time.time()
-       results_df = mc_engine.run_simulation(
-           st.session_state.param_distributions,
-           progress_callback
-       )
-       computation_time = time.time() - start_time
-       
-       # Store results
-       st.session_state.monte_carlo_results = results_df
-       st.session_state._last_mc_computation_time = computation_time
-       
-       # Calculate sensitivity analysis if uncertain parameters exist
-       uncertain_params = {name: config for name, config in st.session_state.param_distributions.items() 
-                          if config['type'] != 'single_value'}
-       
-       if uncertain_params:
-           rng = np.random.default_rng(st.session_state.mc_config.seed)
-           parameter_samples = mc_engine._generate_parameter_samples(
-               st.session_state.param_distributions, rng
-           )
-           
-           try:
-               sensitivity_results = mc_engine.calculate_sensitivity_analysis(parameter_samples)
-               st.session_state.sensitivity_results = sensitivity_results
-           except Exception:
-               st.session_state.sensitivity_results = None
-       else:
-           st.session_state.sensitivity_results = None
+    """
+    Execute Monte Carlo analysis with parameter samples saved
+    """
+    try:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # creating a monte carlo engine
+        mc_engine = ATESMonteCarloEngine(
+            st.session_state.ates_params,
+            st.session_state.mc_config
+        )
+        
+        # creating a progress callback
+        progress_callback = create_progress_callback(progress_bar, status_text)
+        
+        # generating parameter samples and saving
+        rng = np.random.default_rng(st.session_state.mc_config.seed)
+        parameter_samples = mc_engine._generate_parameter_samples(
+            st.session_state.param_distributions, rng
+        )
+        
+        # saving parameter samples to session state
+        st.session_state.parameter_samples = parameter_samples
+        
+        # recording start time
+        start_time = time.time()
+        
+        # run simulation
+        results_df = mc_engine.run_simulation(
+            st.session_state.param_distributions,
+            progress_callback
+        )
+        
+        # calculate computation time
+        computation_time = time.time() - start_time
+        
+        # storgae result
+        st.session_state.monte_carlo_results = results_df
+        st.session_state._last_mc_computation_time = computation_time
+        
+        # calculate sensitivity analysis
+        uncertain_params = {name: config for name, config in st.session_state.param_distributions.items() 
+                           if config['type'] != 'single_value'}
+        
+        if uncertain_params:
+            try:
+                sensitivity_results = mc_engine.calculate_sensitivity_analysis(parameter_samples)
+                st.session_state.sensitivity_results = sensitivity_results
+            except Exception as e:
+                st.warning(f"Sensitivity analysis failed: {str(e)}")
+                st.session_state.sensitivity_results = None
+        else:
+            st.session_state.sensitivity_results = None
 
-       # Set completion flag
-       st.session_state._mc_completed = True
-       
-       # Clean up progress indicators
-       progress_bar.empty()
-       status_text.empty()
-       
-       # Only show success message, no detailed results
-       st.success("Monte Carlo analysis completed!")
+        # finish
+        st.session_state._mc_completed = True
+        
+        # clean progress
+        progress_bar.empty()
+        status_text.empty()
+        
+        # show success info
+        st.success("Monte Carlo analysis completed!")
 
-       st.rerun()
+        st.rerun()
 
-   except Exception as e:
-       st.error(f"Monte Carlo analysis failed: {str(e)}")
+    except Exception as e:
+        st.error(f"Monte Carlo analysis failed: {str(e)}")
+        # clean progress
+        if 'progress_bar' in locals():
+            progress_bar.empty()
+        if 'status_text' in locals():
+            status_text.empty()
 
 def display_monte_carlo_results():
    """
@@ -884,7 +892,7 @@ def render_monte_carlo_export():
     """
     st.markdown("### Raw Monte Carlo Data Export")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         if st.button("Export Full Raw Data", use_container_width=True):
@@ -934,6 +942,32 @@ def render_monte_carlo_export():
                 key="download_key_mc_csv",
                 use_container_width=True
             )
+    
+    with col3:  
+        if st.button("Export Input + Output Data", use_container_width=True):
+            # combine input and output
+            if 'parameter_samples' in st.session_state:
+                input_data = st.session_state.parameter_samples
+                output_data = st.session_state.monte_carlo_results
+                
+                # combine results
+                combined_data = pd.concat([input_data, output_data], axis=1)
+                combined_csv = combined_data.to_csv(index=False, encoding='utf-8-sig')
+                
+                app_state = get_app_state()
+                case_name = app_state.get_case_name()
+                clean_case_name = app_state._clean_filename(case_name)
+                
+                st.download_button(
+                    label="Download Input+Output CSV",
+                    data=combined_csv,
+                    file_name=f"{clean_case_name}_complete_data_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="download_complete_csv",
+                    use_container_width=True
+                )
+            else:
+                st.error("Parameter samples not available")
 
 def reset_all_distributions():
     """

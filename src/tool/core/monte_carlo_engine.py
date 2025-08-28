@@ -226,12 +226,23 @@ class ATESMonteCarloEngine:
 
     def _extract_results(self, result: ATESResults, iteration: int) -> Dict[str, Any]:
         """
-        extract ALL 62 results from ATESResults object
+        extract ALL 62 results from ATESResults object with enhanced anomaly classification
         """
+        
+        # classify abnormal situations
+        heating_anomaly = self._classify_heating_anomaly(result)
+        cooling_anomaly = self._classify_cooling_anomaly(result)
         
         return {
             'iteration': iteration,
             'success': True,
+            
+            # label abnormal situation
+            'heating_anomaly_type': heating_anomaly,
+            'cooling_anomaly_type': cooling_anomaly,
+            'has_parameter_error': heating_anomaly == 'parameter_error' or cooling_anomaly == 'parameter_error',
+            'has_cop_failure': heating_anomaly == 'cop_failure' or cooling_anomaly == 'cop_failure',
+            'has_direct_mode': heating_anomaly == 'direct_mode' or cooling_anomaly == 'direct_mode',
             
             # HEATING OUTPUTS (K Column) - 32 parameters
             'heating_total_energy_stored': float(result.heating_total_energy_stored),                           # K3
@@ -303,7 +314,69 @@ class ATESMonteCarloEngine:
             'heating_direct_mode': bool(getattr(result, 'heating_direct_mode', False)),
             'cooling_direct_mode': bool(getattr(result, 'cooling_direct_mode', False))
         }
-    
+
+    def _classify_heating_anomaly(self, result: ATESResults) -> str:
+        """classify heating anomaly"""
+        try:
+            # Situation1: Normal Direct Mode
+            if getattr(result, 'heating_direct_mode', False):
+                return 'direct_mode'
+            
+            # Situation 3: COP failure(ehp = inf and System COP = NaN)
+            if (hasattr(result, 'heating_ehp') and 
+                result.heating_ehp == float('inf') and
+                np.isnan(result.heating_system_cop)):
+                return 'cop_failure'
+            
+            # Situation 2: parameter error (negative electrical energy or System COP = inf but not direct mode)
+            if (result.heating_system_cop == float('inf') or 
+                (hasattr(result, 'heating_annual_elec_energy_GWhe') and result.heating_annual_elec_energy_GWhe < 0) or
+                (hasattr(result, 'heating_elec_energy_hydraulic_pumps') and result.heating_elec_energy_hydraulic_pumps < 0)):
+                return 'parameter_error'
+            
+            # normal situation
+            if (hasattr(result, 'heating_system_cop') and 
+                np.isfinite(result.heating_system_cop) and 
+                result.heating_system_cop > 0):
+                return 'normal'
+            
+            # other situation
+            return 'unknown'
+        
+        except Exception as e:
+            return 'classification_error'
+
+    def _classify_cooling_anomaly(self, result: ATESResults) -> str:
+        """classify cooling anomaly"""
+        try:
+            # Situation1: Normal Direct Mode
+            if getattr(result, 'cooling_direct_mode', False):
+                return 'direct_mode'
+            
+            # Situation 3: COP failure(ehp = inf and System COP = NaN)
+            if (hasattr(result, 'cooling_ehp') and 
+                result.cooling_ehp == float('inf') and
+                np.isnan(result.cooling_system_cop)):
+                return 'cop_failure'
+            
+            # Situation 2: parameter error (negative electrical energy or System COP = inf but not direct mode)
+            if (result.cooling_system_cop == float('inf') or 
+                (hasattr(result, 'cooling_annual_elec_energy_GWhe') and result.cooling_annual_elec_energy_GWhe < 0) or
+                (hasattr(result, 'cooling_elec_energy_hydraulic_pumps') and result.cooling_elec_energy_hydraulic_pumps < 0)):
+                return 'parameter_error'
+            
+            # normal situation
+            if (hasattr(result, 'cooling_system_cop') and 
+                np.isfinite(result.cooling_system_cop) and 
+                result.cooling_system_cop > 0):
+                return 'normal'
+            
+            # other situation
+            return 'unknown'
+        
+        except Exception as e:
+            return 'classification_error'
+
 
     def _create_error_result(self, iteration: int, error_msg: str) -> Dict[str, Any]:
         """
@@ -313,6 +386,14 @@ class ATESMonteCarloEngine:
             'iteration': iteration,
             'success': False,
             'error': error_msg,
+            
+            # calculation error
+            'heating_anomaly_type': 'calculation_error',
+            'cooling_anomaly_type': 'calculation_error',
+            'has_parameter_error': False,  
+            'has_cop_failure': False,
+            'has_direct_mode': False,
+        
             'heating_system_cop': np.nan,
             'heating_annual_energy_building_GWhth': np.nan,
             'heating_annual_elec_energy_GWhe': np.nan,
@@ -320,6 +401,7 @@ class ATESMonteCarloEngine:
             'heating_ave_power_to_building_MW': np.nan,
             'heating_ave_production_temp': np.nan,
             'heating_direct_mode': False,
+            
             'cooling_system_cop': np.nan,
             'cooling_annual_energy_building_GWhth': np.nan,
             'cooling_annual_elec_energy_GWhe': np.nan,
@@ -327,8 +409,61 @@ class ATESMonteCarloEngine:
             'cooling_ave_power_to_building_MW': np.nan,
             'cooling_ave_production_temp': np.nan,
             'cooling_direct_mode': False,
+            
             'energy_balance_ratio': np.nan,
-            'volume_balance_ratio': np.nan
+            'volume_balance_ratio': np.nan,
+            
+
+            'heating_total_energy_stored': np.nan,
+            'heating_stored_energy_recovered': np.nan,
+            'heating_total_flow_rate_m3hr': np.nan,
+            'heating_total_flow_rate_ls': np.nan,
+            'heating_total_flow_rate_m3s': np.nan,
+            'heating_ave_temp_change_across_HX': np.nan,
+            'heating_temp_change_induced_HP': np.nan,
+            'heating_heat_pump_COP': np.nan,
+            'heating_ehp': np.nan,
+            'heating_ave_power_to_HX_W': np.nan,
+            'heating_ave_power_to_HX_MW': np.nan,
+            'heating_annual_energy_aquifer_J': np.nan,
+            'heating_annual_energy_aquifer_kWhth': np.nan,
+            'heating_annual_energy_aquifer_GWhth': np.nan,
+            'heating_monthly_to_HX': np.nan,
+            'heating_ave_power_to_building_W': np.nan,
+            'heating_annual_energy_building_J': np.nan,
+            'heating_annual_energy_building_kWhth': np.nan,
+            'heating_monthly_to_building': np.nan,
+            'heating_elec_energy_hydraulic_pumps': np.nan,
+            'heating_elec_energy_HP': np.nan,
+            'heating_annual_elec_energy_J': np.nan,
+            'heating_annual_elec_energy_MWhe': np.nan,
+            'heating_elec_energy_per_thermal': np.nan,
+            
+            'cooling_total_energy_stored': np.nan,
+            'cooling_stored_energy_recovered': np.nan,
+            'cooling_total_flow_rate_m3hr': np.nan,
+            'cooling_total_flow_rate_ls': np.nan,
+            'cooling_total_flow_rate_m3s': np.nan,
+            'cooling_ave_temp_change_across_HX': np.nan,
+            'cooling_temp_change_induced_HP': np.nan,
+            'cooling_heat_pump_COP': np.nan,
+            'cooling_ehp': np.nan,
+            'cooling_ave_power_to_HX_W': np.nan,
+            'cooling_ave_power_to_HX_MW': np.nan,
+            'cooling_annual_energy_aquifer_J': np.nan,
+            'cooling_annual_energy_aquifer_kWhth': np.nan,
+            'cooling_annual_energy_aquifer_GWhth': np.nan,
+            'cooling_monthly_to_HX': np.nan,
+            'cooling_ave_power_to_building_W': np.nan,
+            'cooling_ave_power_to_building_MW': np.nan,
+            'cooling_annual_energy_building_J': np.nan,
+            'cooling_annual_energy_building_kWhth': np.nan,
+            'cooling_monthly_to_building': np.nan,
+            'cooling_elec_energy_hydraulic_pumps': np.nan,
+            'cooling_elec_energy_HP': np.nan,
+            'cooling_annual_elec_energy_J': np.nan,
+            'cooling_annual_elec_energy_MWhe': np.nan,
+            'cooling_elec_energy_per_thermal': np.nan
         }
 
 
@@ -510,18 +645,8 @@ class ATESMonteCarloEngine:
     
     def calculate_sensitivity_analysis(self, parameter_samples: pd.DataFrame) -> Dict[str, pd.DataFrame]:
         """
-        Calculate sensitivity analysis using correlation coefficients for all available output parameters.
-        Automatically detects and analyzes all numerical output parameters
-        instead of limiting to a predefined subset.
-        
-        Args:
-            parameter_samples: DataFrame containing the input parameter samples used in Monte Carlo simulation
-            
-        Returns:
-            Dictionary mapping output parameter names to DataFrames containing sensitivity analysis results
-            
-        Raises:
-            ValueError: If no results available or no successful calculations found
+        Calculate sensitivity analysis using correlation coefficients, properly handling anomalies.
+        Only analyzes normal cases and direct mode cases, excluding parameter errors and COP failures.
         """
         # validate that Monte Carlo results are available
         if self.results is None:
@@ -533,9 +658,15 @@ class ATESMonteCarloEngine:
         if len(successful_results) == 0:
             raise ValueError("No successful calculations for sensitivity analysis")
         
-        # ensure alignment between parameter samples and successful results
-        # get iteration indices from successful results
-        successful_indices = successful_results['iteration'].values
+        # Get mask for analyzable cases (normal + direct mode, exclude errors)
+        analyzable_mask = self._get_analyzable_cases_mask(successful_results)
+        analyzable_results = successful_results[analyzable_mask].copy()
+        
+        if len(analyzable_results) < 10:
+            warnings.warn(f"Only {len(analyzable_results)} analyzable cases for sensitivity analysis. Results may be unreliable.")
+        
+        # ensure alignment between parameter samples and analyzable results
+        successful_indices = analyzable_results['iteration'].values
         max_index = len(parameter_samples) - 1
         
         # convert to numpy array and validate indices are within parameter sample range
@@ -546,38 +677,46 @@ class ATESMonteCarloEngine:
         if len(valid_indices) == 0:
             raise ValueError("No valid indices for sensitivity analysis")
         
-        # align parameter samples with successful results based on iteration indices
-        param_samples_successful = parameter_samples.iloc[valid_indices].copy()
-        successful_results_filtered = successful_results.iloc[:len(valid_indices)].copy()
+        # align parameter samples with analyzable results based on iteration indices
+        param_samples_analyzable = parameter_samples.iloc[valid_indices].copy()
+        analyzable_results_filtered = analyzable_results.iloc[:len(valid_indices)].copy()
         
-        # automatically detect all numerical output parameters
-        # exclude administrative columns (iteration, success) from analysis
-        numeric_columns = successful_results_filtered.select_dtypes(include=[np.number]).columns
-        output_params = [col for col in numeric_columns if col not in ['iteration', 'success']]
+        # automatically detect all numerical output parameters, excluding classification columns
+        numeric_columns = analyzable_results_filtered.select_dtypes(include=[np.number]).columns
+        output_params = [col for col in numeric_columns 
+                        if col not in ['iteration', 'success'] 
+                        and not col.endswith('_anomaly_type')
+                        and not col.startswith('has_')]
         
-        print(f"Sensitivity analysis: Processing {len(output_params)} output parameters")
+        print(f"Sensitivity analysis: Processing {len(output_params)} output parameters on {len(analyzable_results_filtered)} analyzable cases")
+        
+        # Log case breakdown
+        self._log_case_breakdown(successful_results)
         
         # initialize results dictionary to store correlation analysis for each output parameter
         sensitivity_results: Dict[str, pd.DataFrame] = {}
         
         # perform correlation analysis for each output parameter
         for output_param in output_params:
-            output_values = successful_results_filtered[output_param].values
+            output_values = analyzable_results_filtered[output_param].values
             correlations: List[Dict[str, Any]] = []
             
+            # Special handling for parameters that might have infinite values in direct mode
+            output_values_processed = self._preprocess_output_values(output_param, output_values, analyzable_results_filtered)
+            
             # calculate correlations between this output and each input parameter
-            for input_param in param_samples_successful.columns:
-                input_values = param_samples_successful[input_param].values
+            for input_param in param_samples_analyzable.columns:
+                input_values = param_samples_analyzable[input_param].values
                 
                 # ensure data arrays have the same length for correlation calculation
-                min_length = min(len(input_values), len(output_values))
+                min_length = min(len(input_values), len(output_values_processed))
                 if min_length < 3:  # Need minimum 3 points for meaningful correlation
                     continue
                 
                 try:
                     # convert to numpy arrays with consistent data type
                     input_data = np.array(input_values[:min_length], dtype=np.float64)
-                    output_data = np.array(output_values[:min_length], dtype=np.float64)
+                    output_data = np.array(output_values_processed[:min_length], dtype=np.float64)
                     
                     # remove invalid values including NaN and infinite values
                     valid_mask = np.isfinite(input_data) & np.isfinite(output_data)
@@ -590,7 +729,7 @@ class ATESMonteCarloEngine:
                     # calculate Pearson correlation coefficient
                     pearson_corr = 0.0
                     try:
-                        if len(input_clean) > 1:
+                        if len(input_clean) > 1 and np.std(input_clean) > 0 and np.std(output_clean) > 0:
                             corr_matrix = np.corrcoef(input_clean, output_clean)
                             if corr_matrix.shape == (2, 2):
                                 pearson_corr = float(corr_matrix[0, 1])
@@ -607,11 +746,12 @@ class ATESMonteCarloEngine:
                             # use rank-based correlation to capture non-linear monotonic relationships
                             rank_input = stats.rankdata(input_clean)
                             rank_output = stats.rankdata(output_clean)
-                            spearman_matrix = np.corrcoef(rank_input, rank_output)
-                            if spearman_matrix.shape == (2, 2):
-                                spearman_corr = float(spearman_matrix[0, 1])
-                                if not np.isfinite(spearman_corr):
-                                    spearman_corr = 0.0
+                            if np.std(rank_input) > 0 and np.std(rank_output) > 0:
+                                spearman_matrix = np.corrcoef(rank_input, rank_output)
+                                if spearman_matrix.shape == (2, 2):
+                                    spearman_corr = float(spearman_matrix[0, 1])
+                                    if not np.isfinite(spearman_corr):
+                                        spearman_corr = 0.0
                     except Exception:
                         spearman_corr = 0.0
                     
@@ -621,7 +761,9 @@ class ATESMonteCarloEngine:
                         'Pearson_Correlation': pearson_corr,
                         'Spearman_Correlation': spearman_corr,
                         'Abs_Pearson': abs(pearson_corr),
-                        'Abs_Spearman': abs(spearman_corr)
+                        'Abs_Spearman': abs(spearman_corr),
+                        'Sample_Size': len(input_clean),
+                        'Excluded_Cases': min_length - len(input_clean)
                     })
                     
                 except Exception as e:
@@ -629,18 +771,137 @@ class ATESMonteCarloEngine:
                     warnings.warn(f"Could not calculate correlation for {input_param} vs {output_param}: {e}")
                     continue
             
-            # sort correlations by absolute Pearson correlation  (desc)
+            # sort correlations by absolute Pearson correlation (desc)
             if correlations:
                 corr_df = pd.DataFrame(correlations)
                 corr_df = corr_df.sort_values('Abs_Pearson', ascending=False)
                 sensitivity_results[output_param] = corr_df
             else:
-                print(f"Skipped output parameter: {output_param} (no valid correlations)") 
+                print(f"Skipped output parameter: {output_param} (no valid correlations)")
+        
         print(f"Sensitivity analysis completed: {len(sensitivity_results)} output parameters analyzed")
         
         # store results in instance variable for later access
         self.sensitivity_results = sensitivity_results
         return sensitivity_results
+    
+    def _get_analyzable_cases_mask(self, results_df: pd.DataFrame) -> np.ndarray:
+        """
+        Get mask for cases that should be included in sensitivity analysis.
+        Includes: normal cases + direct mode cases
+        Excludes: parameter errors + COP failures
+        """
+        mask = np.ones(len(results_df), dtype=bool)
+        
+        # exclude parameter errors (physically invalid)
+        if 'has_parameter_error' in results_df.columns:
+            mask = mask & (~results_df['has_parameter_error'])
+        
+        # exclude COP failures (system unfeasible)
+        if 'has_cop_failure' in results_df.columns:
+            mask = mask & (~results_df['has_cop_failure'])
+        
+        # include both normal cases and direct mode cases
+        # Direct mode is physically valid and represents optimal operation
+        
+        return mask
+    
+    def _preprocess_output_values(self, param_name: str, values: Any, results_df: pd.DataFrame) -> np.ndarray:
+        """
+        Preprocess output values for sensitivity analysis.
+        Handle special cases like infinite COPs in direct mode.
+        """
+        # Convert to numpy array to handle pandas series or other array-like types
+        processed_values = np.asarray(values, dtype=np.float64).copy()
+        
+        # For COP parameters in direct mode, replace inf with a representative high value
+        if 'cop' in param_name.lower() or 'ehp' in param_name.lower():
+            # Find direct mode cases
+            if param_name.startswith('heating_') and 'heating_direct_mode' in results_df.columns:
+                direct_mode_mask = np.asarray(results_df['heating_direct_mode'].values, dtype=bool)
+            elif param_name.startswith('cooling_') and 'cooling_direct_mode' in results_df.columns:
+                direct_mode_mask = np.asarray(results_df['cooling_direct_mode'].values, dtype=bool)
+            else:
+                direct_mode_mask = np.zeros(len(processed_values), dtype=bool)
+            
+            # Replace inf values in direct mode with high representative value
+            if np.any(direct_mode_mask):
+                # Use 10x the maximum finite value, or 100 if no finite values exist
+                finite_values = processed_values[np.isfinite(processed_values)]
+                if len(finite_values) > 0:
+                    replacement_value = float(np.max(finite_values) * 10)
+                else:
+                    replacement_value = 100.0
+                
+                inf_mask = np.isinf(processed_values)
+                processed_values[inf_mask & direct_mode_mask] = replacement_value
+        
+        return processed_values
+
+    def _log_case_breakdown(self, results_df: pd.DataFrame):
+        """Log breakdown of different case types for transparency"""
+        total_cases = len(results_df)
+        
+        normal_cases = 0
+        direct_mode_cases = 0
+        parameter_error_cases = 0
+        cop_failure_cases = 0
+        unknown_cases = 0
+        
+        if 'heating_anomaly_type' in results_df.columns and 'cooling_anomaly_type' in results_df.columns:
+            # Count by examining both heating and cooling anomaly types
+            for _, row in results_df.iterrows():
+                heating_type = row['heating_anomaly_type']
+                cooling_type = row['cooling_anomaly_type']
+                
+                # Prioritize most severe anomaly
+                if heating_type == 'parameter_error' or cooling_type == 'parameter_error':
+                    parameter_error_cases += 1
+                elif heating_type == 'cop_failure' or cooling_type == 'cop_failure':
+                    cop_failure_cases += 1
+                elif heating_type == 'direct_mode' or cooling_type == 'direct_mode':
+                    direct_mode_cases += 1
+                elif heating_type == 'normal' and cooling_type == 'normal':
+                    normal_cases += 1
+                else:
+                    unknown_cases += 1
+        else:
+            # Fallback to has_* columns
+            if 'has_parameter_error' in results_df.columns:
+                parameter_error_cases = int(results_df['has_parameter_error'].sum())
+            if 'has_cop_failure' in results_df.columns:
+                cop_failure_cases = int(results_df['has_cop_failure'].sum())
+            if 'has_direct_mode' in results_df.columns:
+                direct_mode_cases = int(results_df['has_direct_mode'].sum())
+            
+            # Estimate normal cases
+            excluded_cases = parameter_error_cases + cop_failure_cases
+            normal_cases = max(0, total_cases - excluded_cases - direct_mode_cases)
+        
+        analyzable_cases = normal_cases + direct_mode_cases
+        
+        print(f"Case breakdown for sensitivity analysis:")
+        print(f"  Total cases: {total_cases}")
+        print(f"  Normal cases: {normal_cases}")
+        print(f"  Direct mode cases: {direct_mode_cases}")
+        print(f"  Parameter error cases: {parameter_error_cases} (excluded)")
+        print(f"  COP failure cases: {cop_failure_cases} (excluded)")
+        print(f"  Unknown cases: {unknown_cases}")
+        print(f"  Analyzable cases (normal + direct): {analyzable_cases}")
+        print(f"  Analysis coverage: {analyzable_cases/total_cases*100:.1f}%")
+        
+        # Store breakdown for reporting
+        self.case_breakdown = {
+            'total_cases': total_cases,
+            'normal_cases': normal_cases,
+            'direct_mode_cases': direct_mode_cases,
+            'parameter_error_cases': parameter_error_cases,
+            'cop_failure_cases': cop_failure_cases,
+            'unknown_cases': unknown_cases,
+            'analyzable_cases': analyzable_cases,
+            'analysis_coverage_percent': analyzable_cases/total_cases*100 if total_cases > 0 else 0
+        }
+
     
     def get_parameter_importance_ranking(self) -> pd.DataFrame:
         """

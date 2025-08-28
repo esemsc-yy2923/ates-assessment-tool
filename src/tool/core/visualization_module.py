@@ -195,6 +195,115 @@ class ATESVisualizer:
             'System Balance & Overall': '#6C5CE7'
         }
     
+    def _clean_data_with_classification(self, param_name: str, raw_data: pd.Series) -> Dict[str, Any]:
+        """
+        Data Cleaning with Differentiation of Three Types of Anomalies
+        """
+        # Basic Data Cleaning
+        data_with_nan = raw_data.dropna()
+        
+        if len(data_with_nan) == 0:
+            return {
+                'clean_data': pd.Series(dtype=float),
+                'total_count': len(raw_data),
+                'clean_count': 0,
+                'direct_mode_count': 0,
+                'parameter_error_count': 0,
+                'cop_failure_count': 0,
+                'calculation_error_count': 0,
+                'summary': "No valid data"
+            }
+        
+        # Obtain Anomaly Classification Information
+        anomaly_info = self._get_anomaly_classification_for_param(param_name)
+        
+        # separating different types of data
+        finite_data = data_with_nan[np.isfinite(data_with_nan)]
+        infinite_indices = data_with_nan[~np.isfinite(data_with_nan)].index
+        
+        # counting anomaly types
+        direct_mode_count = 0
+        parameter_error_count = 0
+        cop_failure_count = 0
+        calculation_error_count = 0
+        
+        if anomaly_info is not None and len(infinite_indices) > 0:
+            for idx in infinite_indices:
+                if idx < len(anomaly_info):
+                    anomaly_type = anomaly_info.iloc[idx]
+                    if anomaly_type == 'direct_mode':
+                        direct_mode_count += 1
+                    elif anomaly_type == 'parameter_error':
+                        parameter_error_count += 1
+                    elif anomaly_type == 'cop_failure':
+                        cop_failure_count += 1
+                    elif anomaly_type in ['calculation_error', 'classification_error']:
+                        calculation_error_count += 1
+        
+        # generating summary information
+        summary_parts = []
+        if direct_mode_count > 0:
+            summary_parts.append(f"{direct_mode_count} direct mode")
+        if parameter_error_count > 0:
+            summary_parts.append(f"{parameter_error_count} parameter errors")
+        if cop_failure_count > 0:
+            summary_parts.append(f"{cop_failure_count} COP failures")
+        if calculation_error_count > 0:
+            summary_parts.append(f"{calculation_error_count} calculation errors")
+        
+        summary = "; ".join(summary_parts) if summary_parts else "All finite values"
+        
+        return {
+            'clean_data': finite_data,
+            'total_count': len(raw_data),
+            'clean_count': len(finite_data),
+            'direct_mode_count': direct_mode_count,
+            'parameter_error_count': parameter_error_count,
+            'cop_failure_count': cop_failure_count,
+            'calculation_error_count': calculation_error_count,
+            'summary': summary
+        }
+
+    def _get_anomaly_classification_for_param(self, param_name: str) -> Optional[pd.Series]:
+        """
+        Obtaining anomaly classification information based on parameter names
+        """
+        if self.successful_results is None or len(self.successful_results) == 0:
+            return None
+        
+        # determining which anomaly classification to use based on parameter type
+        if param_name.startswith('heating_'):
+            if 'heating_anomaly_type' in self.successful_results.columns:
+                return self.successful_results['heating_anomaly_type']
+        elif param_name.startswith('cooling_'):
+            if 'cooling_anomaly_type' in self.successful_results.columns:
+                return self.successful_results['cooling_anomaly_type']
+        elif param_name in ['energy_balance_ratio', 'volume_balance_ratio']:
+            # system-level parameters: using stricter classification
+            if ('heating_anomaly_type' in self.successful_results.columns and 
+                'cooling_anomaly_type' in self.successful_results.columns):
+                
+                heating_types = self.successful_results['heating_anomaly_type']
+                cooling_types = self.successful_results['cooling_anomaly_type']
+                
+                # creating combined classifications
+                combined_types = []
+                for h_type, c_type in zip(heating_types, cooling_types):
+                    if h_type == 'parameter_error' or c_type == 'parameter_error':
+                        combined_types.append('parameter_error')
+                    elif h_type == 'cop_failure' or c_type == 'cop_failure':
+                        combined_types.append('cop_failure')
+                    elif h_type == 'direct_mode' or c_type == 'direct_mode':
+                        combined_types.append('direct_mode')
+                    elif h_type == 'normal' and c_type == 'normal':
+                        combined_types.append('normal')
+                    else:
+                        combined_types.append('unknown')
+                
+                return pd.Series(combined_types, index=self.successful_results.index)
+        
+        return None
+
     def render_distribution_plots(self):
         """Render frequency distribution plots for selected parameters"""
         st.subheader("Frequency Distributions")
@@ -439,11 +548,11 @@ class ATESVisualizer:
 
     def _plot_histograms(self, selected_params: List[str], group_params: Dict[str, str], group_name: str):
         """
-        Fixed histogram plotting with proper data cleaning and dual Y-axis support
+        Plot histogram with dual y-axis
         """
         n_params = len(selected_params)
         
-        # Display options
+        # Display Option
         with st.expander("Display Options", expanded=False):
             col1, col2, col3 = st.columns(3)
             
@@ -458,19 +567,15 @@ class ATESVisualizer:
             param = selected_params[0]
             raw_data = self.successful_results[param]
             
-            # Clean data - remove NaN and infinite values
-            data = raw_data.dropna()
-            data = data[np.isfinite(data)]
+            # use enhanced data cleaning
+            clean_result = self._clean_data_with_classification(param, raw_data)
+            data = clean_result['clean_data']
             
             if len(data) == 0:
                 st.warning(f"No finite data available for {group_params[param]}")
                 return
             
-            # Check if we had infinite values and inform user
-            infinite_count = len(raw_data) - len(raw_data.dropna()) - len(data)
-            if infinite_count > 0:
-                st.info(f"Note: {infinite_count} infinite values (direct mode) excluded from histogram")
-            
+            # plotting histograms based on options
             if show_dual_axis:
                 # Create figure with secondary y-axis
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -615,7 +720,7 @@ class ATESVisualizer:
                     yaxis=dict(title="Probability")
                 )
             
-            # Add statistical lines
+            # Add statistical lines (mean and median)
             mean_val = safe_float(data.mean())
             median_val = safe_float(data.median())
             
@@ -626,20 +731,45 @@ class ATESVisualizer:
             
             st.plotly_chart(fig, use_container_width=True)
             
-            # Show statistical summary
+            # update statistical summary
             st.markdown("### Statistical Summary")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Count", f"{len(data):,}")
+                st.metric("Finite Values", f"{clean_result['clean_count']:,}")
             with col2:
-                st.metric("Mean", f"{mean_val:.4f}")
+                st.metric("Mean", f"{safe_float(data.mean()):.4f}")
             with col3:
                 st.metric("Median", f"{safe_float(data.median()):.4f}")
             with col4:
                 st.metric("Std Dev", f"{safe_float(data.std()):.4f}")
+            
+            # excluded cases
+            total_excluded = (clean_result['direct_mode_count'] + 
+                            clean_result['parameter_error_count'] + 
+                            clean_result['cop_failure_count'] +
+                            clean_result.get('calculation_error_count', 0))
+            
+            if total_excluded > 0:
+                st.markdown("### Excluded Cases Analysis")
+                
+                exclusion_data = []
+                if clean_result['direct_mode_count'] > 0:
+                    exclusion_data.append(('Direct Mode', clean_result['direct_mode_count'], 'green'))
+                if clean_result['parameter_error_count'] > 0:
+                    exclusion_data.append(('Parameter Errors', clean_result['parameter_error_count'], 'red'))
+                if clean_result['cop_failure_count'] > 0:
+                    exclusion_data.append(('COP Failures', clean_result['cop_failure_count'], 'orange'))
+                if clean_result.get('calculation_error_count', 0) > 0:
+                    exclusion_data.append(('Calculation Errors', clean_result['calculation_error_count'], 'gray'))
+                
+                cols = st.columns(len(exclusion_data))
+                for i, (label, count, color) in enumerate(exclusion_data):
+                    with cols[i]:
+                        percentage = (count / clean_result['total_count']) * 100
+                        st.metric(label, f"{count}", f"{percentage:.1f}%")
         
         else:
-            # Multiple parameters handling
+            # multi-parameter processing
             cols = min(2, n_params)
             
             for i in range(0, len(selected_params), cols):
@@ -650,29 +780,24 @@ class ATESVisualizer:
                         param = selected_params[i + j]
                         raw_data = self.successful_results[param]
                         
-                        # Clean data for each parameter
-                        data = raw_data.dropna()
-                        data = data[np.isfinite(data)]
+                        # use new data cleaning
+                        clean_result = self._clean_data_with_classification(param, raw_data)
+                        data = clean_result['clean_data']
                         
                         if len(data) == 0:
                             with plot_cols[j]:
                                 st.warning(f"No finite data for {group_params[param]}")
                             continue
                         
-                        # Check for infinite values
-                        infinite_count = len(raw_data) - len(raw_data.dropna()) - len(data)
-                        
+                        # dual axis
                         if show_dual_axis:
-                            # Create subplot with dual Y-axis
                             fig = make_subplots(specs=[[{"secondary_y": True}]])
                             
-                            # Calculate histogram data
                             counts, bin_edges = np.histogram(data, bins=bins_count)
                             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
                             bin_width = bin_edges[1] - bin_edges[0]
                             probability = counts / len(data)
                             
-                            # Probability bars (primary Y-axis)
                             fig.add_trace(
                                 go.Bar(
                                     x=bin_centers,
@@ -684,38 +809,43 @@ class ATESVisualizer:
                                         line=dict(color='black', width=0.5)
                                     ),
                                     opacity=0.7,
-                                    offsetgroup=0,
                                     yaxis='y'
                                 )
                             )
                             
-                            # Frequency bars (secondary Y-axis)
                             fig.add_trace(
                                 go.Bar(
                                     x=bin_centers,
                                     y=counts,
                                     width=bin_width * 0.9,
                                     name="Frequency",
-                                    marker=dict(
-                                        color='lightblue',
-                                        opacity=0.4
-                                    ),
-                                    offsetgroup=0,
+                                    marker=dict(color='lightblue', opacity=0.4),
                                     yaxis='y2'
                                 )
                             )
                             
-                            # Configure layout
+                            if show_fit_line and len(data) > 10:
+                                x_range = np.linspace(data.min(), data.max(), 100)
+                                mu, sigma = data.mean(), data.std()
+                                if sigma > 0:
+                                    normal_density = stats.norm.pdf(x_range, mu, sigma)
+                                    normal_probability = normal_density * bin_width
+                                    
+                                    fig.add_trace(
+                                        go.Scatter(
+                                            x=x_range, y=normal_probability,
+                                            mode='lines', name='Fit',
+                                            line=dict(color='orange', width=2, dash='dot'),
+                                            showlegend=False, yaxis='y'  # 明确指定使用主Y轴
+                                        )
+                                    )
+                            
                             fig.update_layout(
                                 title=group_params[param],
                                 height=350,
                                 title_x=0.5,
-                                title_font_size=12,
                                 showlegend=False,
                                 margin=dict(l=40, r=40, t=40, b=40),
-                                barmode='overlay',
-                                bargap=0,
-                                bargroupgap=0,
                                 xaxis=dict(title="Value"),
                                 yaxis=dict(
                                     title="Probability", 
@@ -727,31 +857,14 @@ class ATESVisualizer:
                                     side="right", 
                                     overlaying="y",
                                     range=[0, max(counts) * 1.1] if len(counts) > 0 else [0, 1]
-                                )
+                                ),
+                                barmode='overlay',
+                                bargap=0,
+                                bargroupgap=0
                             )
-                            
-                            # Add normal fit if requested
-                            if show_fit_line and len(data) > 10:
-                                x_range = np.linspace(data.min(), data.max(), 100)
-                                mu, sigma = data.mean(), data.std()
-                                if sigma > 0:
-                                    normal_density = stats.norm.pdf(x_range, mu, sigma)
-                                    normal_probability = normal_density * bin_width
-                                    
-                                    fig.add_trace(
-                                        go.Scatter(
-                                            x=x_range, 
-                                            y=normal_probability,
-                                            mode='lines', 
-                                            name='Fit',
-                                            line=dict(color='orange', width=2, dash='dot'),
-                                            showlegend=False,
-                                            yaxis='y'
-                                        )
-                                    )
-                            
+                        
                         else:
-                            # Single Y-axis mode
+                            # Single Y-axis mode for multiple parameters
                             fig = go.Figure()
                             fig.add_trace(
                                 go.Histogram(
@@ -766,7 +879,6 @@ class ATESVisualizer:
                                 )
                             )
                             
-                            # Add normal fit
                             if show_fit_line and len(data) > 10:
                                 x_range = np.linspace(data.min(), data.max(), 100)
                                 mu, sigma = data.mean(), data.std()
@@ -790,7 +902,6 @@ class ATESVisualizer:
                                 title=group_params[param],
                                 height=350,
                                 title_x=0.5,
-                                title_font_size=12,
                                 showlegend=False,
                                 margin=dict(l=40, r=40, t=40, b=40),
                                 xaxis=dict(title="Value"),
@@ -804,17 +915,13 @@ class ATESVisualizer:
                         with plot_cols[j]:
                             st.plotly_chart(fig, use_container_width=True)
                             
-                            # Statistics below chart
-                            col_stat1, col_stat2 = st.columns(2)
-                            with col_stat1:
-                                st.caption(f"μ: {mean_val:.3f}")
-                            with col_stat2:
-                                st.caption(f"σ: {safe_float(data.std()):.3f}")
-                            
-                            # Show infinite count if any
-                            if infinite_count > 0:
-                                st.caption(f" {infinite_count} infinite values excluded")
-
+                            # show excluded case info
+                            total_excluded = (clean_result['direct_mode_count'] + 
+                                            clean_result['parameter_error_count'] + 
+                                            clean_result['cop_failure_count'] +
+                                            clean_result.get('calculation_error_count', 0))
+                            if total_excluded > 0:
+                                st.caption(f"Excluded: {clean_result['summary']}")
 
         
     def _plot_box_plots(self, selected_params: List[str], group_params: Dict[str, str], group_name: str):
@@ -1090,7 +1197,7 @@ class ATESVisualizer:
 
     def _render_detailed_percentiles(self, available_params: List[str], group_params: Dict[str, str], group_name: str):
         """
-        Render detailed percentile analysis
+        percentile analysis
         """
         st.markdown("### Detailed Percentile Analysis")
         
@@ -1107,68 +1214,55 @@ class ATESVisualizer:
             st.warning("Please select at least one percentile")
             return
         
-        # Calculate percentiles
+        # Calculate percentiles with anomaly information
         percentile_data = []
         for param in available_params:
-            data = self.successful_results[param].dropna()
-            finite_data = data[np.isfinite(data)]
+            raw_data = self.successful_results[param]
+            clean_result = self._clean_data_with_classification(param, raw_data)
+            finite_data = clean_result['clean_data']
             
-            if len(finite_data) > 0: 
+            if len(finite_data) > 0:
                 row = {
                     'Parameter': group_params[param],
                     'Mean': safe_float(finite_data.mean()),
-                    'Std': safe_float(finite_data.std())
+                    'Std': safe_float(finite_data.std()),
+                    'Finite_Count': clean_result['clean_count']
                 }
                 
                 for p in selected_percentiles:
                     row[f'P{p}'] = safe_float(finite_data.quantile(p/100))
                 
-                infinite_count = len(data) - len(finite_data)
-                if infinite_count > 0:
-                    # Get indices of rows with infinite values
-                    infinite_indices = data[~np.isfinite(data)].index
+                # add anomaly situation describe
+                anomaly_parts = []
+                if clean_result['direct_mode_count'] > 0:
+                    anomaly_parts.append(f"{clean_result['direct_mode_count']} direct")
+                if clean_result['parameter_error_count'] > 0:
+                    anomaly_parts.append(f"{clean_result['parameter_error_count']} param-err")
+                if clean_result['cop_failure_count'] > 0:
+                    anomaly_parts.append(f"{clean_result['cop_failure_count']} cop-fail")
+                if clean_result['calculation_error_count'] > 0:
+                    anomaly_parts.append(f"{clean_result['calculation_error_count']} calc-err")
+                
+                if anomaly_parts:
+                    row['Excluded_Cases'] = "; ".join(anomaly_parts)
+                else:
+                    row['Excluded_Cases'] = "None"
                     
-                    # Check direct mode status for these rows
-                    direct_mode_cases = 0
-                    
-                    if param.startswith('heating_'):
-                        # Check heating direct mode
-                        if 'heating_direct_mode' in self.successful_results.columns:
-                            direct_mode_cases = self.successful_results.loc[infinite_indices, 'heating_direct_mode'].sum()
-                    elif param.startswith('cooling_'):
-                        # Check cooling direct mode
-                        if 'cooling_direct_mode' in self.successful_results.columns:
-                            direct_mode_cases = self.successful_results.loc[infinite_indices, 'cooling_direct_mode'].sum()
-                    else:
-                        # check for any direct mode
-                        if 'heating_direct_mode' in self.successful_results.columns and 'cooling_direct_mode' in self.successful_results.columns:
-                            heating_direct = self.successful_results.loc[infinite_indices, 'heating_direct_mode']
-                            cooling_direct = self.successful_results.loc[infinite_indices, 'cooling_direct_mode']
-                            direct_mode_cases = (heating_direct | cooling_direct).sum()
-                    
-                    # Generate appropriate labels
-                    cop_cases = infinite_count - direct_mode_cases
-                    
-                    if direct_mode_cases > 0:
-                        row['Parameter'] += f" ({direct_mode_cases} direct mode)"
-                    
-                    if cop_cases > 0:
-                        row['Parameter'] += f" ({cop_cases} COP ≤ 1)"
-                        
                 percentile_data.append(row)
         
         if percentile_data:
             percentile_df = pd.DataFrame(percentile_data)
             
             # Format numerical columns
-            numeric_cols = [col for col in percentile_df.columns if col != 'Parameter']
+            numeric_cols = [col for col in percentile_df.columns if col not in ['Parameter', 'Excluded_Cases']]
             for col in numeric_cols:
-                percentile_df[col] = percentile_df[col].round(4)
+                if col != 'Finite_Count':
+                    percentile_df[col] = percentile_df[col].round(4)
             
             # Display table
             st.dataframe(percentile_df, use_container_width=True, hide_index=True)
             
-            # Percentile chart
+            # Percentile chart (only for finite values)
             self._plot_percentile_chart(percentile_df, selected_percentiles, group_name)
 
     def _render_confidence_intervals(self, available_params: List[str], group_params: Dict[str, str], group_name: str):
@@ -1685,15 +1779,64 @@ class ATESResultsExporter:
         self.sensitivity_results = sensitivity_results
         self.successful_results = monte_carlo_results[monte_carlo_results['success'] == True] if 'success' in monte_carlo_results.columns else monte_carlo_results
     
+    def _generate_anomaly_statistics(self) -> Dict:
+        """
+        generate anomaly statistics
+        """
+        if len(self.successful_results) == 0:
+            return {}
+        
+        results_df = self.successful_results
+        total_cases = len(results_df)
+        
+        stats = {
+            'total_cases': total_cases,
+            'normal_cases': 0,
+            'direct_mode_cases': 0, 
+            'parameter_error_cases': 0,
+            'cop_failure_cases': 0,
+            'calculation_error_cases': 0
+        }
+        
+        # counting each type of anomaly
+        if 'has_direct_mode' in results_df.columns:
+            stats['direct_mode_cases'] = int(results_df['has_direct_mode'].sum())
+        
+        if 'has_parameter_error' in results_df.columns:
+            stats['parameter_error_cases'] = int(results_df['has_parameter_error'].sum())
+        
+        if 'has_cop_failure' in results_df.columns:
+            stats['cop_failure_cases'] = int(results_df['has_cop_failure'].sum())
+        
+        # calculate total fail cases
+        if hasattr(self, 'monte_carlo_results'):
+            failed_cases = len(self.monte_carlo_results) - len(self.successful_results)
+            stats['calculation_error_cases'] = failed_cases
+        
+        # calculate all the success cases
+        normal_mask = np.ones(len(results_df), dtype=bool)
+        if 'has_parameter_error' in results_df.columns:
+            normal_mask = normal_mask & (~results_df['has_parameter_error'])
+        if 'has_cop_failure' in results_df.columns:
+            normal_mask = normal_mask & (~results_df['has_cop_failure'])
+        if 'has_direct_mode' in results_df.columns:
+            normal_mask = normal_mask & (~results_df['has_direct_mode'])
+        
+        stats['normal_cases'] = int(np.sum(normal_mask))
+        
+        return stats
+
+
     def generate_comprehensive_report(self) -> Dict[str, Any]:
         """
-        Generate comprehensive analysis report
+        generate a comprehensive report
         """
         if len(self.successful_results) == 0:
             return {"error": "No successful results to analyze"}
         
         report = {
             "simulation_summary": self._generate_simulation_summary(),
+            "anomaly_statistics": self._generate_anomaly_statistics(),
             "statistical_summary": self._generate_statistical_summary(),
             "sensitivity_summary": self._generate_sensitivity_summary() if self.sensitivity_results else None,
         }
@@ -1990,9 +2133,10 @@ def create_results_dashboard():
         render_summary_report_tab()
 
 
+
 def render_summary_report_tab():
     """
-    Render comprehensive summary report tab
+    summary report
     """
     st.subheader("Comprehensive Analysis Report")
     
@@ -2000,7 +2144,7 @@ def render_summary_report_tab():
         st.error("No Monte Carlo results available")
         return
     
-    # Generate comprehensive report
+
     exporter = ATESResultsExporter(
         st.session_state.monte_carlo_results, 
         st.session_state.get('sensitivity_results')
@@ -2012,33 +2156,127 @@ def render_summary_report_tab():
         st.error(report["error"])
         return
     
-    # Executive Summary
+    # Executive Summary with anomaly classification
     st.markdown("### Executive Summary")
     
     sim_summary = report["simulation_summary"]
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric(
-            "Simulation Success Rate", 
-            f"{sim_summary['success_rate_percent']:.1f}%",
-            delta="Excellent" if sim_summary['success_rate_percent'] > 95 else "Needs Review"
-        )
+        st.metric("Success Rate", f"{sim_summary['success_rate_percent']:.1f}%")
     
     with col2:
-        convergence_status = "Achieved" if sim_summary.get('convergence_achieved', False) else "Check Required"
-        st.metric("Convergence", convergence_status)
+        st.metric("Total Simulations", f"{sim_summary['total_iterations']:,}")
     
     with col3:
-        total_iterations = sim_summary['total_iterations']
-        st.metric("Total Simulations", f"{total_iterations:,}")
+        
+        anomaly_stats = report.get("anomaly_statistics", {})
+        direct_mode_cases = anomaly_stats.get('direct_mode_cases', 0)
+        st.metric("Direct Mode Cases", f"{direct_mode_cases:,}")
     
-    # Key Performance Indicators
+    with col4:
+        error_cases = anomaly_stats.get('parameter_error_cases', 0) + anomaly_stats.get('cop_failure_cases', 0)
+        st.metric("Error Cases", f"{error_cases:,}")
+    
+    # Anomaly Breakdown
+    if anomaly_stats:
+        st.markdown("### Case Classification")
+        
+        total = anomaly_stats.get('total_cases', 1)
+        
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            normal_cases = anomaly_stats.get('normal_cases', 0)
+            normal_pct = (normal_cases / total) * 100 if total > 0 else 0
+            st.metric("Normal Cases", f"{normal_cases:,}", f"{normal_pct:.1f}%")
+        
+        with col2:
+            direct_cases = anomaly_stats.get('direct_mode_cases', 0)
+            direct_pct = (direct_cases / total) * 100 if total > 0 else 0
+            st.metric("Direct Mode", f"{direct_cases:,}", f"{direct_pct:.1f}%")
+        
+        with col3:
+            param_error_cases = anomaly_stats.get('parameter_error_cases', 0)
+            param_error_pct = (param_error_cases / total) * 100 if total > 0 else 0
+            st.metric("Parameter Errors", f"{param_error_cases:,}", f"{param_error_pct:.1f}%")
+        
+        with col4:
+            cop_failure_cases = anomaly_stats.get('cop_failure_cases', 0)
+            cop_failure_pct = (cop_failure_cases / total) * 100 if total > 0 else 0
+            st.metric("COP Failures", f"{cop_failure_cases:,}", f"{cop_failure_pct:.1f}%")
+        
+        with col5:
+            calc_error_cases = anomaly_stats.get('calculation_error_cases', 0)
+            calc_error_pct = (calc_error_cases / total) * 100 if total > 0 else 0
+            st.metric("Calc Errors", f"{calc_error_cases:,}", f"{calc_error_pct:.1f}%")
+        
+     
+        if total > 0:
+            categories = ['Normal', 'Direct Mode', 'Parameter Errors', 'COP Failures', 'Calculation Errors']
+            values = [
+                anomaly_stats.get('normal_cases', 0),
+                anomaly_stats.get('direct_mode_cases', 0), 
+                anomaly_stats.get('parameter_error_cases', 0),
+                anomaly_stats.get('cop_failure_cases', 0),
+                anomaly_stats.get('calculation_error_cases', 0)
+            ]
+            colors = ['#2ECC71', '#3498DB', '#E74C3C', '#F39C12', '#95A5A6']
+            
+        
+            filtered_data = [(cat, val, col) for cat, val, col in zip(categories, values, colors) if val > 0]
+            
+            if len(filtered_data) > 1:
+                fig = go.Figure(data=[
+                    go.Pie(
+                        labels=[item[0] for item in filtered_data],
+                        values=[item[1] for item in filtered_data],
+                        marker_colors=[item[2] for item in filtered_data],
+                        hole=0.3
+                    )
+                ])
+                
+                fig.update_layout(
+                    title="Case Distribution",
+                    title_x=0.5,
+                    height=400,
+                    showlegend=True
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+        
+      
+        with st.expander("Case Classification Explanation", expanded=False):
+            st.markdown("""
+            **Normal Cases:** Standard heat pump operations with finite, positive values
+            - All calculations successful with physically reasonable results
+            - Heat pump COP > 1, System COP finite and positive
+            
+            **Direct Mode:** Groundwater temperature directly meets building requirements
+            - Physically valid and highly efficient operation
+            - No heat pump needed, infinite heat pump COP is expected
+            - System COP remains finite (building energy / pump energy)
+            
+            **Parameter Errors:** Invalid parameter combinations leading to physically meaningless results
+            - Injection temperatures violate physical constraints  
+            - Results in negative flows, volumes, or energy consumption
+            - Should be excluded from analysis as physically impossible
+            
+            **COP Failures:** Heat pump COP ≤ 1, system technically unfeasible
+            - Temperature differences too large for viable heat pump operation
+            - Infinite electrical energy consumption
+            - System cannot achieve desired temperature lift efficiently
+            
+            **Calculation Errors:** Code execution failures
+            - Exceptions, timeouts, or numerical instabilities during calculation
+            - Should be investigated for code robustness
+            """)
+    
+    # Key Performance Indicators for normal and direct mode cases only
     if "statistical_summary" in report:
-        st.markdown("### Key Performance Indicators")
+        st.markdown("### Key Performance Indicators (Analyzable Cases Only)")
         
         stats_summary = report["statistical_summary"]
-        
         
         performance_data = []
         for param, stats in stats_summary.items():
@@ -2048,33 +2286,33 @@ def render_summary_report_tab():
             param_display = param.replace('_', ' ').title()
             
             try:
-               
                 if stats.get("parameter_type") == "performance_coefficient":
-                
                     if stats.get("heat_pump_mode_statistics"):
                         mean_val = stats["heat_pump_mode_statistics"]["mean"]
                         p10_val = stats["heat_pump_mode_statistics"]["percentiles"]["p10"]
                         p90_val = stats["heat_pump_mode_statistics"]["percentiles"]["p90"]
+                        note = f"HP mode only ({stats.get('heat_pump_mode_cases', 0)} cases)"
                     elif stats.get("statistics"):
                         mean_val = stats["statistics"]["mean"]
                         p10_val = stats["statistics"]["percentiles"]["p10"]
                         p90_val = stats["statistics"]["percentiles"]["p90"]
+                        note = f"All cases ({stats.get('total_cases', 0)} cases)"
                     else:
-                        continue  
+                        continue
                         
                 elif stats.get("parameter_type") == "standard_output":
-               
                     mean_val = stats["mean"]
                     p10_val = stats["percentiles"]["p10"]
                     p90_val = stats["percentiles"]["p90"]
+                    note = f"{stats.get('count', 0)} finite values"
                 else:
-                    continue 
+                    continue
                 
                 performance_data.append({
                     'Parameter': param_display,
                     'Mean': f"{mean_val:.3f}",
                     'P10-P90 Range': f"{p10_val:.3f} - {p90_val:.3f}",
-                    'Parameter Type': stats.get("parameter_type", "unknown")
+                    'Notes': note
                 })
                 
             except (KeyError, TypeError):
@@ -2085,13 +2323,25 @@ def render_summary_report_tab():
             st.dataframe(perf_df, use_container_width=True, hide_index=True)
         else:
             st.info("No valid performance indicators to display")
-
     
-    # Sensitivity Analysis Summary
+    # Sensitivity Analysis Summary with case filtering information
     if "sensitivity_summary" in report and report["sensitivity_summary"]:
         st.markdown("### Sensitivity Analysis Summary")
         
         sens_summary = report["sensitivity_summary"]
+        
+       
+        if "analysis_coverage" in sens_summary:
+            coverage_info = sens_summary["analysis_coverage"]
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Cases Analyzed", f"{coverage_info.get('analyzed_cases', 0):,}")
+            with col2:
+                st.metric("Cases Excluded", f"{coverage_info.get('excluded_cases', 0):,}")
+            with col3:
+                coverage_pct = coverage_info.get('coverage_percentage', 0)
+                st.metric("Analysis Coverage", f"{coverage_pct:.1f}%")
         
         # most influential parameters
         if "most_influential_parameters" in sens_summary:
@@ -2109,20 +2359,6 @@ def render_summary_report_tab():
             if influence_data:
                 influence_df = pd.DataFrame(influence_data)
                 st.dataframe(influence_df, use_container_width=True, hide_index=True)
-        
-        # sensitivity statistics
-        if "parameter_influence_summary" in sens_summary:
-            influence_summary = sens_summary["parameter_influence_summary"]
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Parameters Analyzed", influence_summary['total_parameters_analyzed'])
-            with col2:
-                st.metric("Average Influence", f"{influence_summary['average_influence_strength']:.4f}")
-            with col3:
-                st.metric("Max Influence", f"{influence_summary['max_influence_strength']:.4f}")
-    
-
     
     # Export Options
     st.markdown("### Export Options")
@@ -2163,17 +2399,25 @@ def render_summary_report_tab():
                 sens_df_copy['Output_Parameter'] = output_param
                 all_sensitivity.append(sens_df_copy)
             
-            combined_sensitivity = pd.concat(all_sensitivity, ignore_index=True)
-            sensitivity_csv = combined_sensitivity.to_csv(index=False)
-            
-            st.download_button(
-                label="Download Sensitivity Data (CSV)",
-                data=sensitivity_csv,
-                file_name=f"ates_sensitivity_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="download_sensitivity_csv",
-                use_container_width=True
-            )
+            if all_sensitivity:
+                combined_sensitivity = pd.concat(all_sensitivity, ignore_index=True)
+                sensitivity_csv = combined_sensitivity.to_csv(index=False)
+                
+                st.download_button(
+                    label="Download Sensitivity Data (CSV)",
+                    data=sensitivity_csv,
+                    file_name=f"ates_sensitivity_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="download_sensitivity_csv",
+                    use_container_width=True
+                )
+            else:
+                st.button(
+                    "Download Sensitivity Data (CSV)",
+                    disabled=True,
+                    help="No sensitivity data available",
+                    use_container_width=True
+                )
         else:
             st.button(
                 "Download Sensitivity Data (CSV)",

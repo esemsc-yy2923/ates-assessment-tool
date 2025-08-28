@@ -28,7 +28,7 @@ class ATESParameters:
     heating_months:float = 6.5                        # D17 - th Number of heating months (months)
     cooling_months: float = 3.5                       # D18 - tc Number of cooling months (months)
     pump_energy_density: float = 600.0                # D25 - Eg Pump energy density (kJ/m³)
-    heating_ave_injection_temp: float = 10.0          # D27 - Ti,c Heating injection temperature (°C)
+    heating_ave_injection_temp: float = 10.0          # D27 - Ti,c Cold borehole(s) injection temperature(°C)
     heating_temp_to_building: float = 60.0            # D29 - Tb,h Building heating temperature (°C)
 
     # C. COP(coefficent of performance) Parameters
@@ -42,7 +42,7 @@ class ATESParameters:
     cooling_target_avg_flowrate_pd: float = 0.0       # G10 - qb,c Target average flow rate per doublet for cooling (m³/hr)
     cooling_number_of_doublets: int = 0               # G15 - nb Cooling number of doublets (-)
     cooling_total_produced_volume: float = 0.0        # G21 - Vp,c Total produced cooling volume (m³)
-    cooling_ave_injection_temp: float = 21.0          # G27 - Ti,c Cooling injection temperature (°C)
+    cooling_ave_injection_temp: float = 21.0          # G27 - Ti,h Hot borehole(s) injection temperature(°C)
     cooling_temp_to_building: float = 14.0            # G29 - Tb,c Building cooling temperature (°C)
 
     # E. Auto-calculated Parameters
@@ -597,7 +597,7 @@ class ATESCalculator:
 
         # Electrical energy calculations
         # N34 = D25*G21*1000
-        r.cooling_elec_energy_hydraulic_pumps = p.pump_energy_density * abs(p.cooling_total_produced_volume) * 1000
+        r.cooling_elec_energy_hydraulic_pumps = p.pump_energy_density * p.cooling_total_produced_volume * 1000
 
         if r.cooling_direct_mode:
             # Direct cooling: no heat pump electrical energy
