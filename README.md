@@ -2,8 +2,6 @@
 
 An open-source probabilistic assessment tool for Aquifer Thermal Energy Storage (ATES) and Groundwater Heating & Cooling (GHWC) systems.
 
-This project develop first open-sorce software for ATES/GWHC assessment based on a simple Monte-Carlo approach, featuring deterministic calculations, Monte Carlo simulation, statistical reporting, and sensitivity analysis. 
-
 ---
 
 ## Features
@@ -23,6 +21,8 @@ This project develop first open-sorce software for ATES/GWHC assessment based on
 Our tool has been successfully deployed to the cloud based on Streamlit Cloud. You can access it directly via:
 
 **Live URL: [https://imperial-ates-assessment-tool.streamlit.app]**
+
+---
 
 ## Data Security Notice
 
