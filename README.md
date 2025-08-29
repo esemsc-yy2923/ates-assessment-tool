@@ -2,7 +2,7 @@
 
 An open-source probabilistic assessment tool for Aquifer Thermal Energy Storage (ATES) and Groundwater Heating & Cooling (GHWC) systems.
 
-This project replicates and extends the functionality of Oracle Crystal Ball in a fully open-source Python package, featuring deterministic calculations, Monte Carlo simulation, statistical reporting, and sensitivity analysis — all accessible via a Streamlit-based interface.
+This project develop first open-sorce software for ATES/GWHC assessment based on a simple Monte-Carlo approach, featuring deterministic calculations, Monte Carlo simulation, statistical reporting, and sensitivity analysis. 
 
 ---
 
@@ -17,7 +17,22 @@ This project replicates and extends the functionality of Oracle Crystal Ball in 
 
 ---
 
-## Installation
+
+## Live Deployment
+
+Our tool has been successfully deployed to the cloud based on Streamlit Cloud. You can access it directly via:
+
+**Live URL: [https://imperial-ates-assessment-tool.streamlit.app]**
+
+## Data Security Notice
+
+**If your data contains sensitive or confidential information, we strongly recommend local deployment.**
+
+For more information on handling sensitive data, please refer to the [Streamlit Secrets Management Documentation](https://docs.streamlit.io/deploy/concepts/secrets).
+
+---
+
+## Local Deployment
 
 ### Step 0: Install Python (if not already installed)
 
@@ -74,11 +89,6 @@ ates-tool
 ```
 
 By default, the Streamlit app will open in your browser at http://localhost:8501/.
-
-**Run the validation framework:**
-```bash
-ates-validate
-```
 
 If the command is not found, make sure the installation step was successful.
 
